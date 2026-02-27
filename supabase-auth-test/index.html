@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Supabase Google Auth Test</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 480px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+    h1 { font-size: 1.25rem; margin-bottom: 0.5rem; }
+    .card {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+    }
+    .status { font-size: 0.875rem; color: #94a3b8; margin-bottom: 1rem; }
+    .status.error { color: #f87171; }
+    .status.success { color: #4ade80; }
+    button {
+      background: #3b82f6;
+      color: white;
+      border: none;
+      padding: 0.75rem 1.25rem;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    button:hover { background: #2563eb; }
+    button.sign-out { background: #64748b; }
+    button.sign-out:hover { background: #475569; }
+    .user-info { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #334155; }
+    .user-info p { margin: 0.25rem 0; font-size: 0.9rem; }
+    .user-info strong { color: #94a3b8; }
+    img.avatar { width: 48px; height: 48px; border-radius: 50%; margin-bottom: 0.5rem; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Supabase + Google Auth Test</h1>
+    <p class="status" id="status">Checking session…</p>
+
+    <div id="signed-out">
+      <button type="button" id="btn-google" aria-label="Sign in with Google">
+        <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        Sign in with Google
+      </button>
+    </div>
+
+    <div id="signed-in" class="hidden">
+      <div class="user-info">
+        <img id="user-avatar" class="avatar" src="" alt="" />
+        <p><strong>Email</strong> <span id="user-email"></span></p>
+        <p><strong>Name</strong> <span id="user-name"></span></p>
+        <p><strong>User ID</strong> <span id="user-id" style="word-break: break-all;"></span></p>
+      </div>
+      <button type="button" class="sign-out" id="btn-sign-out">Sign out</button>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="config.js"></script>
+  <script type="module">
+    const statusEl = document.getElementById('status');
+    const signedOut = document.getElementById('signed-out');
+    const signedIn = document.getElementById('signed-in');
+    const btnGoogle = document.getElementById('btn-google');
+    const btnSignOut = document.getElementById('btn-sign-out');
+
+    function setStatus(msg, isError = false) {
+      statusEl.textContent = msg;
+      statusEl.className = 'status' + (isError ? ' error' : ' success');
+    }
+
+    function showUser(user) {
+      signedOut.classList.add('hidden');
+      signedIn.classList.remove('hidden');
+      document.getElementById('user-email').textContent = user.email ?? '—';
+      document.getElementById('user-name').textContent = user.user_metadata?.full_name ?? user.user_metadata?.name ?? '—';
+      document.getElementById('user-id').textContent = user.id ?? '—';
+      const img = document.getElementById('user-avatar');
+      const url = user.user_metadata?.avatar_url ?? user.user_metadata?.picture;
+      if (url) {
+        img.src = url;
+        img.alt = user.user_metadata?.full_name ?? 'Avatar';
+      } else {
+        img.style.display = 'none';
+      }
+    }
+
+    function showSignedOut() {
+      signedIn.classList.add('hidden');
+      signedOut.classList.remove('hidden');
+      setStatus('Signed out. Use the button above to sign in with Google.');
+    }
+
+    async function upsertUserToTable(supabaseClient, user) {
+      const { error } = await supabaseClient.from('auth_users').upsert({
+        id: user.id,
+        email: user.email ?? '',
+        full_name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? null,
+        avatar_url: user.user_metadata?.avatar_url ?? user.user_metadata?.picture ?? null,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'id' });
+      if (error) console.warn('Could not save user to table (run supabase-table-setup.sql?):', error.message);
+    }
+
+    async function init() {
+      if (typeof CONFIG === 'undefined' || !CONFIG.SUPABASE_URL || !CONFIG.SUPABASE_ANON_KEY) {
+        setStatus('Add your Supabase URL and anon key in config.js (Dashboard → Project Settings → API). Do not use placeholder text.', true);
+        return;
+      }
+      if (CONFIG.SUPABASE_URL.includes('YOUR_PROJECT') || CONFIG.SUPABASE_URL.includes('your_project')) {
+        setStatus('Replace YOUR_PROJECT_REF in config.js with your real Supabase Project URL from the dashboard.', true);
+        return;
+      }
+
+      const { createClient } = supabase;
+      const supabaseClient = createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+
+      const { data: { session }, error: sessionError } = await supabaseClient.auth.getSession();
+      if (sessionError) {
+        setStatus('Session error: ' + sessionError.message, true);
+        return;
+      }
+      if (session?.user) {
+        setStatus('Signed in.');
+        showUser(session.user);
+        await upsertUserToTable(supabaseClient, session.user);
+      } else {
+        setStatus('Not signed in. Click the button to test Google auth.');
+      }
+
+      supabaseClient.auth.onAuthStateChange(async (event, session) => {
+        if (event === 'SIGNED_IN' && session?.user) {
+          setStatus('Signed in.');
+          showUser(session.user);
+          await upsertUserToTable(supabaseClient, session.user);
+        } else if (event === 'SIGNED_OUT') {
+          showSignedOut();
+        }
+      });
+
+      btnGoogle.onclick = async () => {
+        setStatus('Redirecting to Google…');
+        const redirectTo = window.location.origin + window.location.pathname;
+        const { error } = await supabaseClient.auth.signInWithOAuth({
+          provider: 'google',
+          options: { redirectTo }
+        });
+        if (error) {
+          setStatus('Error: ' + error.message, true);
+        }
+      };
+
+      btnSignOut.onclick = async () => {
+        await supabaseClient.auth.signOut();
+        showSignedOut();
+      };
+    }
+
+    init();
+  </script>
+</body>
+</html>
